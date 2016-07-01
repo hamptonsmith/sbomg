@@ -221,7 +221,8 @@ public class ModelClass {
             
             for (Pair<String, TypeName> parameter
                     : myRootMethods.getParameters(methodName)) {
-                method.addParameter(parameter.getRight(), parameter.getLeft());
+                method.addParameter(parameter.getRight(), parameter.getLeft(),
+                        Modifier.FINAL);
             }
             
             method.addCode(myRootMethods.getCode(methodName));
