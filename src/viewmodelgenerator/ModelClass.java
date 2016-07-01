@@ -11,6 +11,7 @@ import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.CodeBlock;
 import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.MethodSpec;
+import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
 import com.squareup.javapoet.TypeSpec;
 import java.util.HashMap;
@@ -163,6 +164,13 @@ public class ModelClass {
                                 .build());
         result.addType(subscription.build());
         
+        result.addField(FieldSpec.builder(
+                ParameterizedTypeName.get(ClassName.get("java.util", "List"),
+                        ClassName.get("", "EventListener")),
+                "myListeners", Modifier.PRIVATE, Modifier.FINAL)
+                .initializer("new $T<EventListener>()",
+                        ClassName.get("java.util", "LinkedList"))
+                .build());
         for (FieldSpec f : myFields) {
             result.addField(f);
         }
@@ -176,6 +184,35 @@ public class ModelClass {
         }
         constructor.addCode(myAdditionalInitializationCode.build());
         result.addMethod(constructor.build());
+        
+        result.addMethod(MethodSpec.methodBuilder("addListener")
+                .addModifiers(Modifier.PUBLIC)
+                .returns(ClassName.get("", "Subscription"))
+                .addParameter(
+                        ClassName.get("", "Listener"), "l", Modifier.FINAL)
+                .addCode(CodeBlock.builder()
+                        .beginControlFlow(
+                                "EventListener el = new EventListener()")
+                        .beginControlFlow("public void on(Event e)")
+                        .addStatement("e.on(l)")
+                        .endControlFlow()
+                        .endControlFlow("")
+                        .addStatement("return addListener(el)")
+                        .build()).build());
+        
+        result.addMethod(MethodSpec.methodBuilder("addListener")
+                .addModifiers(Modifier.PUBLIC)
+                .returns(ClassName.get("", "Subscription"))
+                .addParameter(ClassName.get(
+                        "", "EventListener"), "el", Modifier.FINAL)
+                .addCode(CodeBlock.builder()
+                        .addStatement("myListeners.add(el)")
+                        .beginControlFlow("return new Subscription()")
+                        .beginControlFlow("public void unsubscribe()")
+                        .addStatement("myListeners.remove(el)")
+                        .endControlFlow()
+                        .endControlFlow("")
+                        .build()).build());
         
         for (String methodName : myRootMethods.getNames()) {
             MethodSpec.Builder method = MethodSpec.methodBuilder(methodName)
