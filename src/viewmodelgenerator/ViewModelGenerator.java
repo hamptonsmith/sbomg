@@ -267,6 +267,8 @@ public class ViewModelGenerator {
         
         JavaFile output =
                 JavaFile.builder(e.getPackage(), r.buildTypeSpec()).build();
+        
+        System.out.println(formatModelDesc(e.getRawModelDescription()));
         output.writeTo(System.out);
     }
     
@@ -522,7 +524,7 @@ public class ViewModelGenerator {
         FieldSpec field;
         if (modelDesc instanceof String) {
             String fieldTypeString = (String) modelDesc;
-            TypeName fieldType = ClassName.get("", fieldTypeString);
+            TypeName fieldType = typeName(fieldTypeString);
             
             FieldSpec.Builder fieldBuild = FieldSpec.builder(
                     fieldType, "my" + fieldName, Modifier.PRIVATE);
@@ -609,6 +611,25 @@ public class ViewModelGenerator {
         return w.toString();
     }
     
+    private static String formatModelDesc(String desc) {
+        StringBuilder b = new StringBuilder("/*%\n");
+        Scanner scan = new Scanner(desc);
+        
+        boolean nonEmptyLine = false;
+        while (scan.hasNextLine()) {
+            String nextLine = scan.nextLine();
+            
+            if (nonEmptyLine || !nextLine.isEmpty()) {
+                nonEmptyLine = nonEmptyLine || !nextLine.isEmpty();
+                b.append("  %");
+                b.append(nextLine);
+                b.append("\n");
+            }
+        }
+        b.append("  */\n");
+        return b.toString();
+    }
+    
     private static ExtractedData parseFile(Scanner s) {
         String result = "";
         String pkg = null;
@@ -654,16 +675,38 @@ public class ViewModelGenerator {
             throw new RuntimeException("No 'package' line.");
         }
         
-        return new ExtractedData(new Yaml().load(result), pkg);
+        return new ExtractedData(result, new Yaml().load(result), pkg);
+    }
+    
+    private static TypeName typeName(String rawName) {
+        TypeName result;
+        switch (rawName) {
+            case "int": {
+                result = TypeName.INT;
+                break;
+            }
+            default: {
+                result = ClassName.get("", rawName);
+                break;
+            }
+        }
+        return result;
     }
     
     private static class ExtractedData {
+        private final String myRawModelDescription;
         private final Object myModelDescription;
         private final String myPackage;
         
-        public ExtractedData(Object modelDesc, String pkg) {
+        public ExtractedData(
+                String rawModelDesc, Object modelDesc, String pkg) {
+            myRawModelDescription = rawModelDesc;
             myModelDescription = modelDesc;
             myPackage = pkg;
+        }
+        
+        public String getRawModelDescription() {
+            return myRawModelDescription;
         }
         
         public Object getModelDescription() {

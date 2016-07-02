@@ -88,6 +88,7 @@ public class ModelClass {
     public TypeSpec buildTypeSpec() {
         TypeSpec.Builder result =
                 TypeSpec.classBuilder(myName).addModifiers(Modifier.PUBLIC);
+        
         if (myStaticFlag) {
             result.addModifiers(Modifier.STATIC);
         }
