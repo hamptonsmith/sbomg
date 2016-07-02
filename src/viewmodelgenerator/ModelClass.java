@@ -28,13 +28,14 @@ import org.apache.commons.lang3.tuple.Pair;
  */
 public class ModelClass {
     private final String myName;
+    private final boolean myStaticFlag;
     
     private final AbstractMethodSet myRootListener = new AbstractMethodSet();
     private final Map<String, AbstractMethodSet> myAuxiliaryListeners =
             new HashMap<>();
     
     private final List<TypeSpec> myRootTypes = new LinkedList<>();
-    private final ConcreteMethodSet myRootMethods = new ConcreteMethodSet();
+    private final List<MethodSpec> myRootMethods = new LinkedList();
     
     private final List<ModelClass> mySubModels = new LinkedList<>();
     
@@ -45,8 +46,9 @@ public class ModelClass {
     private final CodeBlock.Builder myAdditionalInitializationCode =
             CodeBlock.builder();
     
-    public ModelClass(String name) {
+    public ModelClass(String name, boolean staticFlag) {
         myName = name;
+        myStaticFlag = staticFlag;
     }
     
     public void addInitializationCode(CodeBlock b) {
@@ -86,14 +88,17 @@ public class ModelClass {
     public TypeSpec buildTypeSpec() {
         TypeSpec.Builder result =
                 TypeSpec.classBuilder(myName).addModifiers(Modifier.PUBLIC);
+        if (myStaticFlag) {
+            result.addModifiers(Modifier.STATIC);
+        }
+        
         TypeName thisTypeName = ClassName.get("", myName);
         
         for (Map.Entry<String, AbstractMethodSet> auxListenerDef
                 : myAuxiliaryListeners.entrySet()) {
             TypeSpec.Builder auxListener =
                     TypeSpec.interfaceBuilder(auxListenerDef.getKey())
-                    .addModifiers(Modifier.PUBLIC, Modifier.STATIC,
-                            Modifier.ABSTRACT);
+                    .addModifiers(Modifier.PUBLIC, Modifier.STATIC);
             
             AbstractMethodSet methodDefs = auxListenerDef.getValue();
             for (String methodName : methodDefs.getNames()) {
@@ -115,8 +120,7 @@ public class ModelClass {
         }
         
         TypeSpec.Builder listener = TypeSpec.interfaceBuilder("Listener")
-                    .addModifiers(Modifier.PUBLIC, Modifier.STATIC,
-                            Modifier.ABSTRACT);
+                    .addModifiers(Modifier.PUBLIC, Modifier.STATIC);
         
         for (String methodName : myRootListener.getNames()) {
             MethodSpec.Builder method =
@@ -136,8 +140,7 @@ public class ModelClass {
         result.addType(listener.build());
         
         TypeSpec.Builder event = TypeSpec.interfaceBuilder("Event")
-                .addModifiers(Modifier.PUBLIC, Modifier.STATIC, 
-                        Modifier.ABSTRACT)
+                .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
                 .addMethod(MethodSpec.methodBuilder("on")
                         .addModifiers(Modifier.ABSTRACT, Modifier.PUBLIC)
                         .addParameter(ClassName.get("", "Listener"), "l")
@@ -146,8 +149,7 @@ public class ModelClass {
         
         TypeSpec.Builder eventListener =
                 TypeSpec.interfaceBuilder("EventListener")
-                .addModifiers(
-                        Modifier.PUBLIC, Modifier.STATIC, Modifier.ABSTRACT)
+                .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
                 .addMethod(MethodSpec.methodBuilder("on")
                         .addModifiers(Modifier.ABSTRACT, Modifier.PUBLIC)
                         .addParameter(ClassName.get("", "Event"), "e")
@@ -156,8 +158,7 @@ public class ModelClass {
         
         TypeSpec.Builder subscription =
                 TypeSpec.interfaceBuilder("Subscription")
-                        .addModifiers(Modifier.PUBLIC, Modifier.STATIC,
-                                Modifier.ABSTRACT)
+                        .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
                         .addMethod(MethodSpec.methodBuilder("unsubscribe")
                                 .addModifiers(
                                         Modifier.ABSTRACT, Modifier.PUBLIC)
@@ -168,7 +169,7 @@ public class ModelClass {
                 ParameterizedTypeName.get(ClassName.get("java.util", "List"),
                         ClassName.get("", "EventListener")),
                 "myListeners", Modifier.PRIVATE, Modifier.FINAL)
-                .initializer("new $T<EventListener>()",
+                .initializer("new $T<>()",
                         ClassName.get("java.util", "LinkedList"))
                 .build());
         for (FieldSpec f : myFields) {
@@ -193,7 +194,7 @@ public class ModelClass {
                 .addCode(CodeBlock.builder()
                         .beginControlFlow(
                                 "EventListener el = new EventListener()")
-                        .beginControlFlow("public void on(Event e)")
+                        .beginControlFlow("@Override public void on(Event e)")
                         .addStatement("e.on(l)")
                         .endControlFlow()
                         .endControlFlow("")
@@ -208,26 +209,13 @@ public class ModelClass {
                 .addCode(CodeBlock.builder()
                         .addStatement("myListeners.add(el)")
                         .beginControlFlow("return new Subscription()")
-                        .beginControlFlow("public void unsubscribe()")
+                        .beginControlFlow("@Override public void unsubscribe()")
                         .addStatement("myListeners.remove(el)")
                         .endControlFlow()
                         .endControlFlow("")
                         .build()).build());
         
-        for (String methodName : myRootMethods.getNames()) {
-            MethodSpec.Builder method = MethodSpec.methodBuilder(methodName)
-                    .returns(myRootMethods.getReturnType(methodName))
-                    .addModifiers(Modifier.PUBLIC);
-            
-            for (Pair<String, TypeName> parameter
-                    : myRootMethods.getParameters(methodName)) {
-                method.addParameter(parameter.getRight(), parameter.getLeft(),
-                        Modifier.FINAL);
-            }
-            
-            method.addCode(myRootMethods.getCode(methodName));
-            result.addMethod(method.build());
-        }
+        result.addMethods(myRootMethods);
         
         for (ModelClass c : mySubModels) {
             result.addType(c.buildTypeSpec());
@@ -239,10 +227,23 @@ public class ModelClass {
         
         return result.build();
     }
-    
+
     public void addRootMethod(String methodName, TypeName returnType,
             Iterable<Pair<String, TypeName>> parameters, CodeBlock code) {
-        myRootMethods.addMethod(methodName, returnType, parameters, code);
+        MethodSpec.Builder b = MethodSpec.methodBuilder(methodName)
+                .returns(returnType)
+                .addCode(code)
+                .addModifiers(Modifier.PUBLIC);
+        
+        for (Pair<String, TypeName> param : parameters) {
+            b.addParameter(param.getRight(), param.getLeft(), Modifier.FINAL);
+        }
+        
+        myRootMethods.add(b.build());
+    }
+    
+    public void addRootMethod(MethodSpec m) {
+        myRootMethods.add(m);
     }
     
     public void addListenerEvent(String eventName,

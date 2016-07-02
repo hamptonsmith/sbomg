@@ -49,20 +49,63 @@ import org.yaml.snakeyaml.Yaml;
  * @author hamptos
  */
 public class ViewModelGenerator {
-    private static final Template LIST_ADD_METHOD_TEMPL;
-    private static final Template LIST_REMOVE_METHOD_BY_INDEX_TEMPL;
-    private static final Template LIST_REMOVE_METHOD_BY_KEY_TEMPL;
-    private static final Template SUBSCRIBE_TEMPL;
-    private static final Template SET_METHOD_TEMPL;
+    private static final Template SUBSCRIBE_IF_NOT_NULL_TEMPL;
+    private static final String SUBSCRIBE_IF_NOT_NULL_CODE = ""
+            + "final ${fieldType} value = ${keyParam}.getValue();\n"
+            + "if (value != null) {\n"
+            + "  ${fieldType}.Subscription elSub =\n"
+            + "    value.addListener(\n"
+            + "        new ${fieldType}.EventListener() {\n"
+            + "          @Override "
+            + "public void on(final ${fieldType}.Event e) {\n"
+            + "            Event parentE = new Event() {\n"
+            + "              @Override public void on(Listener l) {\n"
+            + "                int curIndex = \n"
+            + "                    my${fieldName}List.indexOf(${keyParam});\n"
+            + "                l.on${fieldName}Updated(${parentType}.this,\n"
+            + "                    value, curIndex, ${keyParam}, e);\n"
+            + "              }\n"
+            + "            };\n"
+            + "            for (EventListener l : myListeners) {\n"
+            + "              l.on(parentE);\n"
+            + "            }\n"
+            + "          }\n"
+            + "        });\n"
+            + "  my${fieldName}Subscriptions.put(${keyParam}, elSub);\n"
+            + "}\n"
+            ;
     
-    private static final String LIST_ADD_METHOD_CODE = ""
-            + "final ${fieldName}Key slot = "
-            + "new ${fieldName}Key(${valueParam});\n"
-            + "my${fieldName}List.add(slot);\n\n"
+    private static final Template LIST_SET_METHOD_BY_INDEX_TEMPL;
+    private static final String LIST_SET_METHOD_BY_INDEX_CODE = ""
+            + "${fieldName}Key slot = "
+            + "my${fieldName}List.get(${indexParam});\n\n"
+            + "set${fieldName}(${indexParam}, slot, ${valueParam});\n"
+            ;
+    
+    private static final Template LIST_SET_METHOD_BY_KEY_TEMPL;
+    private static final String LIST_SET_METHOD_BY_KEY_CODE = ""
+            + "int index = my${fieldName}List.indexOf(${keyParam});\n"
+            + "if (index == -1) {\n"
+            + "  throw new IllegalArgumentException();\n"
+            + "}\n\n"
+            + "set${fieldName}(index, ${keyParam}, ${valueParam});\n"
+            ;
+    
+    private static final Template LIST_SET_METHOD_CORE_TEMPL;
+    private static final String LIST_SET_METHOD_CORE_CODE = ""
+            + "final ${fieldType} oldType = ${keyParam}.getValue();\n"
+            + "${keyParam}.setValue(${valueParam});\n"
+            + "<#if !leafFlag>"
+            + "if (my${fieldName}Subscriptions.containsKey(${keyParam})) {\n"
+            + "  my${fieldName}Subscriptions.remove("
+            + "${keyParam}).unsubscribe();\n"
+            + "}\n"
+            + "subscribeIfNotNull(${keyParam});\n"
+            + "</#if>"
             + "Event addEvent = new Event() {\n"
-            + "  public void on(Listener l) {\n"
-            + "    l.on${fieldName}Added(${valueParam}, "
-            + "my${fieldName}List.size() - 1, key);\n"
+            + "  @Override public void on(Listener l) {\n"
+            + "    l.on${fieldName}Set(${parentType}.this, oldType, "
+            + "${valueParam}, ${indexParam}, ${keyParam});\n"
             + "  }\n"
             + "};\n"
             + "for (EventListener l : myListeners) {\n"
@@ -70,31 +113,56 @@ public class ViewModelGenerator {
             + "}\n"
             ;
     
-    private static final String LIST_REMOVE_METHOD_BY_INDEX_CODE = ""
+    private static final Template LIST_ADD_METHOD_TEMPL;
+    private static final String LIST_ADD_METHOD_CODE = ""
             + "final ${fieldName}Key slot = "
-            + "my${fieldName}List.remove(${indexParam});\n\n"
-            + "Event removeEvent = new Event() {\n"
+            + "new ${fieldName}Key(${valueParam});\n"
+            + "my${fieldName}List.add(slot);\n"
+            + "final int addedAt = my${fieldName}List.size() - 1;\n"
+            + "<#if !leafFlag>"
+            + "subscribeIfNotNull(slot);\n"
+            + "</#if>"
+            + "Event addEvent = new Event() {\n"
+            + "  @Override\n"
             + "  public void on(Listener l) {\n"
-            + "    l.on${fieldName}Removed(slot.getValue(), "
-            + "${indexParam}, slot);\n"
+            + "    l.on${fieldName}Added(${parentType}.this, ${valueParam}, "
+            + "addedAt, slot);\n"
             + "  }\n"
             + "};\n"
             + "for (EventListener l : myListeners) {\n"
-            + "  l.on(removeEvent);\n"
+            + "  l.on(addEvent);\n"
             + "}\n"
             ;
     
+    private static final Template LIST_REMOVE_METHOD_BY_INDEX_TEMPL;
+    private static final String LIST_REMOVE_METHOD_BY_INDEX_CODE = ""
+            + "${fieldName}Key slot = "
+            + "my${fieldName}List.remove(${indexParam});\n\n"
+            + "remove${fieldName}(${indexParam}, slot);\n"
+            ;
+    
+    private static final Template LIST_REMOVE_METHOD_BY_KEY_TEMPL;
     private static final String LIST_REMOVE_METHOD_BY_KEY_CODE = ""
-            + "final int index = "
-            + "my${fieldName}List.indexOf(${keyParam});\n"
+            + "int index = my${fieldName}List.indexOf(${keyParam});\n"
             + "if (index == -1) {\n"
             + "  throw new IllegalArgumentException();\n"
             + "}\n\n"
+            + "remove${fieldName}(index, ${keyParam});\n"
+            ;
+    
+    private static final Template LIST_REMOVE_METHOD_CORE_TEMPL;
+    private static final String LIST_REMOVE_METHOD_CORE_CODE = ""
+            + "<#if !leafFlag>"
+            + "if (my${fieldName}Subscriptions.containsKey(${keyParam})) {\n"
+            + "  my${fieldName}Subscriptions.remove("
+            + "${keyParam}).unsubscribe();\n"
+            + "}\n\n"
+            + "</#if>"
             + "my${fieldName}List.remove(${keyParam});\n"
             + "Event removeEvent = new Event() {\n"
-            + "  public void on(Listener l) {\n"
-            + "    l.on${fieldName}Removed(${keyParam}.getValue(), "
-            + "index, ${keyParam});\n"
+            + "  @Override public void on(Listener l) {\n"
+            + "    l.on${fieldName}Removed(${parentType}.this, "
+            + "${keyParam}.getValue(), ${indexParam}, ${keyParam});\n"
             + "  }\n"
             + "};\n"
             + "for (EventListener l : myListeners) {\n"
@@ -102,6 +170,7 @@ public class ViewModelGenerator {
             + "}\n"
             ;
     
+    private static final Template SUBSCRIBE_TEMPL;
     private static final String SUBSCRIBE_CODE = ""
             + "<#if !finalFlag>"
             + "if (my${fieldName} == null) {\n"
@@ -116,7 +185,7 @@ public class ViewModelGenerator {
             + "      new ${fieldType}.EventListener() {\n"
             + "        public void on(final ${fieldType}.Event e) {\n"
             + "          Event parentE = new Event() {\n"
-            + "            public void on(Listener l) {\n"
+            + "            @Override public void on(Listener l) {\n"
             + "              l.on${fieldName}Update(${parentType}.this,\n"
             + "                  my${fieldName}, e);\n"
             + "            }\n"
@@ -129,6 +198,7 @@ public class ViewModelGenerator {
             + "}\n"
             ;
     
+    private static final Template SET_METHOD_TEMPL;
     private static final String SET_METHOD_CODE = ""
             + "my${fieldName} = ${valueParam};\n"
             + "<#if !leafFlag>\n"
@@ -138,7 +208,7 @@ public class ViewModelGenerator {
             + "</#if>\n"
             + "${afterUnsubscribe}"
             + "Event setEvent = new Event() {\n"
-            + "  public void on(Listener l) {\n"
+            + "  @Override public void on(Listener l) {\n"
             + "    l.on${contextName}Set(this, my${fieldName});\n"
             + "  }\n"
             + "};\n"
@@ -153,10 +223,19 @@ public class ViewModelGenerator {
         SUBSCRIBE_TEMPL = template(SUBSCRIBE_CODE, c);
         SET_METHOD_TEMPL = template(SET_METHOD_CODE, c);
         LIST_ADD_METHOD_TEMPL = template(LIST_ADD_METHOD_CODE, c);
+        LIST_REMOVE_METHOD_CORE_TEMPL =
+                template(LIST_REMOVE_METHOD_CORE_CODE, c);
         LIST_REMOVE_METHOD_BY_INDEX_TEMPL =
                 template(LIST_REMOVE_METHOD_BY_INDEX_CODE, c);
         LIST_REMOVE_METHOD_BY_KEY_TEMPL =
                 template(LIST_REMOVE_METHOD_BY_KEY_CODE, c);
+        LIST_SET_METHOD_CORE_TEMPL = template(LIST_SET_METHOD_CORE_CODE, c);
+        LIST_SET_METHOD_BY_INDEX_TEMPL =
+                template(LIST_SET_METHOD_BY_INDEX_CODE, c);
+        LIST_SET_METHOD_BY_KEY_TEMPL =
+                template(LIST_SET_METHOD_BY_KEY_CODE, c);
+        
+        SUBSCRIBE_IF_NOT_NULL_TEMPL = template(SUBSCRIBE_IF_NOT_NULL_CODE, c);
     }
     
     private static Template template(String code, Configuration config) {
@@ -183,7 +262,7 @@ public class ViewModelGenerator {
         String rootContextName =
                 fileName.substring(0, fileName.length() - ".java".length());
         
-        ModelClass r = new ModelClass(rootContextName);
+        ModelClass r = new ModelClass(rootContextName, false);
         outfitModel(r, "", e.getModelDescription());
         
         JavaFile output =
@@ -264,6 +343,18 @@ public class ViewModelGenerator {
                         "new $T<>()", ClassName.get("java.util", "LinkedList"))
                 .build());
         
+        if (!elTypeData.isLeaf()) {
+            dest.addField(FieldSpec.builder(
+                    ParameterizedTypeName.get(
+                            ClassName.get("java.util", "Map"), slotType,
+                            ClassName.get("", elTypeRaw + ".Subscription")),
+                    "my" + contextName + "Subscriptions",
+                    Modifier.PRIVATE, Modifier.FINAL)
+                    .initializer(
+                            "new $T<>()", ClassName.get("java.util", "HashMap"))
+                    .build());
+        }
+        
         dest.addListenerEvent(contextName + "Added", ImmutableList.of(
                 ImmutablePair.of("addedElement", elType),
                 ImmutablePair.of("index", TypeName.INT),
@@ -272,29 +363,42 @@ public class ViewModelGenerator {
                 ImmutablePair.of("newElement", elType)), 
                 renderCodeBlock(LIST_ADD_METHOD_TEMPL,
                         "valueParam", "newElement",
-                        "fieldName", contextName));
+                        "fieldName", contextName,
+                        "fieldType", elTypeRaw,
+                        "leafFlag", elTypeData.isLeaf(),
+                        "parentType", dest.getName()));
         
-        asdfasdf Methods can not be overridden.  Fix.
         dest.addListenerEvent(contextName + "Removed", ImmutableList.of(
                 ImmutablePair.of("removedElement", elType),
                 ImmutablePair.of("index", TypeName.INT),
                 ImmutablePair.of("key", slotType)));
         dest.addRootMethod("remove" + contextName, TypeName.VOID,
-                ImmutableList.of(
-                        ImmutablePair.of("index", TypeName.INT)
-                ), renderCodeBlock(LIST_REMOVE_METHOD_BY_INDEX_TEMPL,
+                ImmutableList.of(ImmutablePair.of("index", TypeName.INT)),
+                renderCodeBlock(LIST_REMOVE_METHOD_BY_INDEX_TEMPL,
                         "indexParam", "index",
                         "fieldName", contextName));
         dest.addRootMethod("remove" + contextName, TypeName.VOID,
-                ImmutableList.of(
-                        ImmutablePair.of("key", slotType)
-                ), renderCodeBlock(LIST_REMOVE_METHOD_BY_KEY_TEMPL,
+                ImmutableList.of(ImmutablePair.of("key", slotType)),
+                renderCodeBlock(LIST_REMOVE_METHOD_BY_KEY_TEMPL,
                         "keyParam", "key",
                         "fieldName", contextName));
+        dest.addRootMethod(MethodSpec.methodBuilder("remove" + contextName)
+                .addModifiers(Modifier.PRIVATE)
+                .returns(TypeName.VOID)
+                .addParameter(TypeName.INT, "index", Modifier.FINAL)
+                .addParameter(slotType, "key", Modifier.FINAL)
+                .addCode(renderCodeBlock(LIST_REMOVE_METHOD_CORE_TEMPL,
+                        "fieldName", contextName,
+                        "keyParam", "key",
+                        "indexParam", "index",
+                        "leafFlag", elTypeData.isLeaf(),
+                        "parentType", dest.getName()))
+                .build());
+                
         
         if (!elTypeData.isLeaf()) {
             dest.addListenerEvent(contextName + "Updated", ImmutableList.of(
-                    ImmutablePair.of("addedElement", elType),
+                    ImmutablePair.of("updatedElement", elType),
                     ImmutablePair.of("index", TypeName.INT),
                     ImmutablePair.of("key", slotType),
                     ImmutablePair.of("event",
@@ -307,7 +411,51 @@ public class ViewModelGenerator {
                     ImmutablePair.of("newValue", elType),
                     ImmutablePair.of("index", TypeName.INT),
                     ImmutablePair.of("key", slotType)));
+            dest.addRootMethod("set" + contextName, TypeName.VOID,
+                    ImmutableList.of(
+                            ImmutablePair.of("index", TypeName.INT),
+                            ImmutablePair.of("newValue", elType)),
+                    renderCodeBlock(LIST_SET_METHOD_BY_INDEX_TEMPL,
+                            "fieldName", contextName,
+                            "indexParam", "index",
+                            "valueParam", "newValue"));
+            dest.addRootMethod("set" + contextName, TypeName.VOID,
+                ImmutableList.of(
+                        ImmutablePair.of("key", slotType),
+                        ImmutablePair.of("newValue", elType)),
+                renderCodeBlock(LIST_SET_METHOD_BY_KEY_TEMPL,
+                        "keyParam", "key",
+                        "fieldName", contextName,
+                        "valueParam", "newValue"));
         }
+        
+        dest.addRootMethod(MethodSpec.methodBuilder("subscribeIfNotNull")
+                .returns(TypeName.VOID)
+                .addModifiers(Modifier.PRIVATE)
+                .addParameter(slotType, "key", Modifier.FINAL)
+                .addCode(renderCodeBlock(SUBSCRIBE_IF_NOT_NULL_TEMPL,
+                        "keyParam", "key",
+                        "fieldName", contextName,
+                        "fieldType", elTypeRaw,
+                        "parentType", dest.getName()))
+                .build());
+        
+        dest.addRootMethod(MethodSpec.methodBuilder("set" + contextName)
+                .returns(TypeName.VOID)
+                .addModifiers(Modifier.PRIVATE)
+                .addParameter(TypeName.INT, "index", Modifier.FINAL)
+                .addParameter(slotType, "key", Modifier.FINAL)
+                .addParameter(elType, "value", Modifier.FINAL)
+                .addCode(renderCodeBlock(LIST_SET_METHOD_CORE_TEMPL,
+                        "keyParam", "key",
+                        "indexParam", "index",
+                        "valueParam", "value",
+                        "leafFlag", elTypeData.isLeaf(),
+                        "fieldName", contextName,
+                        "fieldType", elTypeRaw,
+                        "parentType", dest.getName()))
+                .build());
+        
     }
     
     private static ListElementTypeData outfitModelWithListElementType(
@@ -332,13 +480,10 @@ public class ViewModelGenerator {
                 }
             }
         }
-        else if (elDesc instanceof String) {
+        else {
             result = new ListElementTypeData(false, false,
                     outfitModelWithListElementType(
                             dest, contextName, new HashSet<>(), elDesc));
-        }
-        else {
-            throw new RuntimeException();
         }
         
         return result;
@@ -353,7 +498,7 @@ public class ViewModelGenerator {
         }
         else if (elDesc instanceof Map) {
             result = contextName + "Record";
-            ModelClass r = new ModelClass(result);
+            ModelClass r = new ModelClass(result, true);
             outfitModel(r, "", elDesc);
             dest.addType(r.buildTypeSpec());
         }
