@@ -405,6 +405,16 @@ public class ViewModelGenerator {
                     ImmutablePair.of("key", slotType),
                     ImmutablePair.of("event",
                             ClassName.get("", elTypeRaw + ".Event"))));
+            dest.addRootMethod(MethodSpec.methodBuilder("subscribeIfNotNull")
+                .returns(TypeName.VOID)
+                .addModifiers(Modifier.PRIVATE)
+                .addParameter(slotType, "key", Modifier.FINAL)
+                .addCode(renderCodeBlock(SUBSCRIBE_IF_NOT_NULL_TEMPL,
+                        "keyParam", "key",
+                        "fieldName", contextName,
+                        "fieldType", elTypeRaw,
+                        "parentType", dest.getName()))
+                .build());
         }
         
         if (!elTypeData.isFinal()) {
@@ -429,20 +439,7 @@ public class ViewModelGenerator {
                         "keyParam", "key",
                         "fieldName", contextName,
                         "valueParam", "newValue"));
-        }
-        
-        dest.addRootMethod(MethodSpec.methodBuilder("subscribeIfNotNull")
-                .returns(TypeName.VOID)
-                .addModifiers(Modifier.PRIVATE)
-                .addParameter(slotType, "key", Modifier.FINAL)
-                .addCode(renderCodeBlock(SUBSCRIBE_IF_NOT_NULL_TEMPL,
-                        "keyParam", "key",
-                        "fieldName", contextName,
-                        "fieldType", elTypeRaw,
-                        "parentType", dest.getName()))
-                .build());
-        
-        dest.addRootMethod(MethodSpec.methodBuilder("set" + contextName)
+            dest.addRootMethod(MethodSpec.methodBuilder("set" + contextName)
                 .returns(TypeName.VOID)
                 .addModifiers(Modifier.PRIVATE)
                 .addParameter(TypeName.INT, "index", Modifier.FINAL)
@@ -457,7 +454,7 @@ public class ViewModelGenerator {
                         "fieldType", elTypeRaw,
                         "parentType", dest.getName()))
                 .build());
-        
+        }
     }
     
     private static ListElementTypeData outfitModelWithListElementType(
