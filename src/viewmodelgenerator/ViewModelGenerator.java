@@ -6,12 +6,8 @@
 package viewmodelgenerator;
 
 import com.google.common.base.CaseFormat;
-import com.google.common.base.Function;
-import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Iterators;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.CodeBlock;
 import com.squareup.javapoet.FieldSpec;
@@ -20,19 +16,15 @@ import com.squareup.javapoet.MethodSpec;
 import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
 import com.squareup.javapoet.TypeSpec;
-import com.squareup.javapoet.TypeVariableName;
-import freemarker.core.ParseException;
 import freemarker.template.Configuration;
-import freemarker.template.MalformedTemplateNameException;
 import freemarker.template.Template;
 import freemarker.template.TemplateException;
-import freemarker.template.TemplateNotFoundException;
-import freemarker.template.Version;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -43,7 +35,6 @@ import java.util.Scanner;
 import java.util.Set;
 import javax.lang.model.element.Modifier;
 import org.apache.commons.lang3.tuple.ImmutablePair;
-import org.apache.commons.lang3.tuple.Pair;
 import org.yaml.snakeyaml.Yaml;
 
 /**
@@ -378,15 +369,10 @@ public class ViewModelGenerator {
         
         String slotTypeRaw = contextName + "Key";
         TypeName slotType = ClassName.get("", slotTypeRaw);
-        dest.addType(TypeSpec.classBuilder(slotTypeRaw)
+        
+        TypeSpec.Builder keyType = TypeSpec.classBuilder(slotTypeRaw)
                 .addModifiers(Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
-                .addField(elType, "myValue", Modifier.PRIVATE)
                 .addMethod(MethodSpec.constructorBuilder()
-                        .addModifiers(Modifier.PRIVATE)
-                        .addParameter(elType, "value")
-                        .addStatement("myValue = value")
-                        .build())
-                .addMethod(MethodSpec.methodBuilder("setValue")
                         .addModifiers(Modifier.PRIVATE)
                         .addParameter(elType, "value")
                         .addStatement("myValue = value")
@@ -395,8 +381,22 @@ public class ViewModelGenerator {
                         .addModifiers(Modifier.PRIVATE)
                         .returns(elType)
                         .addStatement("return myValue")
-                        .build())
-                .build());
+                        .build());
+        
+        if (elTypeData.isFinal() || immutableFlag) {
+            keyType.addField(
+                    elType, "myValue", Modifier.PRIVATE, Modifier.FINAL);
+        }
+        else {
+            keyType.addField(elType, "myValue", Modifier.PRIVATE);
+            keyType.addMethod(MethodSpec.methodBuilder("setValue")
+                        .addModifiers(Modifier.PRIVATE)
+                        .addParameter(elType, "value")
+                        .addStatement("myValue = value")
+                        .build());
+        }
+        
+        dest.addType(keyType.build());
         
         FieldSpec.Builder field = FieldSpec.builder(
                 ParameterizedTypeName.get(
@@ -429,7 +429,7 @@ public class ViewModelGenerator {
         
         if (contextName.isEmpty()) {
             dest.addImplements(ParameterizedTypeName.get(
-                    ClassName.get(Iterable.class), elType));
+                    ClassName.get("", "Iterable"), elType));
             dest.addOverriddenRootMethod("iterator", 
                     ParameterizedTypeName.get(
                             ClassName.get(Iterator.class), elType),
@@ -441,7 +441,7 @@ public class ViewModelGenerator {
                                             "my" + contextName + "List"));
         }
         else {
-            // Gross workaround here.  JavaPoet doesn't provide anyway to
+            // Gross workaround here.  JavaPoet doesn't provide any way to
             // include a random non-static import.  So we render out a template
             // that happens to include an unresolved $T, then replace it with
             // the type we want to import.
@@ -449,7 +449,7 @@ public class ViewModelGenerator {
                     CaseFormat.UPPER_CAMEL.to(
                             CaseFormat.LOWER_CAMEL, contextName),
                     ParameterizedTypeName.get(
-                            ClassName.get(Iterable.class), elType),
+                            ClassName.get("", "Iterable"), elType),
                     ImmutableList.of(),
                     CodeBlock.of(
                             renderTemplate(RETURN_LIST_METHOD_TEMPL,
@@ -462,6 +462,26 @@ public class ViewModelGenerator {
                                                     + "List")),
                             ParameterizedTypeName.get(
                                     ClassName.get(Iterator.class), elType)));
+        }
+        
+        if (immutableFlag) {
+            String elementParam = CaseFormat.UPPER_CAMEL.to(
+                    CaseFormat.LOWER_CAMEL, contextName + "Elements");
+            dest.addInitializationParameter(elementParam,
+                    ParameterizedTypeName.get(
+                            ClassName.get("", "Iterable"), elType));
+            
+            CodeBlock.Builder init = CodeBlock.builder()
+                    .beginControlFlow("for ($T e : $L)", elType, elementParam)
+                    .addStatement("my$LList.add(new $LKey(e))", contextName,
+                            contextName);
+            
+            if (!elTypeData.isLeaf()) {
+                init.addStatement("subscribeIfNotNull(e)");
+            }
+            
+            init.endControlFlow();
+            dest.addInitializationCode(init.build());
         }
         
         if (replaceableFlag) {
@@ -481,6 +501,20 @@ public class ViewModelGenerator {
                             "parentType", dest.getName(),
                             "elementsParam", "elements",
                             "leafFlag", elTypeData.isLeaf()));
+            
+            dest.addBuildCode(CodeBlock.builder()
+                    .beginControlFlow("")
+                    .addStatement("List<$T> valueList = new $T<>()",
+                            elType, LinkedList.class)
+                    .beginControlFlow(
+                            "for ($T s : my$LList)", slotType, contextName)
+                    .addStatement("valueList.add(s.getValue())")
+                    .endControlFlow()
+                    .addStatement("l.on$LReplaced(this, "
+                            + "$T.unmodifiableList(valueList))",
+                            contextName, Collections.class)
+                    .endControlFlow()
+                    .build());
         }
         
         if (!elTypeData.isLeaf()) {
@@ -513,17 +547,19 @@ public class ViewModelGenerator {
         }
         
         if (!immutableFlag) {
-            dest.addBuildCode(CodeBlock.builder()
-                    .beginControlFlow("")
-                    .addStatement("int i = 0")
-                    .beginControlFlow(
-                            "for ($T s : my$LList)", slotType, contextName)
-                    .addStatement("l.on$LAdded(this, s.getValue(), i, s)",
-                            contextName)
-                    .addStatement("i++")
-                    .endControlFlow()
-                    .endControlFlow()
-                    .build());
+            if (!replaceableFlag) {
+                dest.addBuildCode(CodeBlock.builder()
+                        .beginControlFlow("")
+                        .addStatement("int i = 0")
+                        .beginControlFlow(
+                                "for ($T s : my$LList)", slotType, contextName)
+                        .addStatement("l.on$LAdded(this, s.getValue(), i, s)",
+                                contextName)
+                        .addStatement("i++")
+                        .endControlFlow()
+                        .endControlFlow()
+                        .build());
+            }
 
             dest.addListenerEvent(contextName + "Added", ImmutableList.of(
                     ImmutablePair.of("addedElement", elType),
@@ -609,7 +645,6 @@ public class ViewModelGenerator {
     
     private static ListElementTypeData outfitModelWithListElementType(
             ModelClass dest, String contextName, Object elDesc) {
-        System.out.println("outfitModelWithListElementType-noopt: " + elDesc);
         ListElementTypeData result;
         
         if (elDesc instanceof List) {
@@ -639,7 +674,6 @@ public class ViewModelGenerator {
     private static ListElementTypeData outfitModelWithListElementType(
             ModelClass dest, String contextName, Set<String> options,
             Object elDesc) {
-        System.out.println("outfitModelWithListElementType: " + elDesc);
         ListElementTypeData result;
         
         if (elDesc instanceof String) {
@@ -683,6 +717,10 @@ public class ViewModelGenerator {
             FieldSpec.Builder fieldBuild = FieldSpec.builder(
                     fieldType, "my" + fieldName, Modifier.PRIVATE);
             
+            dest.addRootMethod("get" + fieldName, fieldType, ImmutableList.of(),
+                    CodeBlock.builder()
+                            .addStatement("return my$L", fieldName).build());
+            
             if (!leafFlag) {
                 dest.addListenerEvent(contextName + "Updated", ImmutableList.of(
                         ImmutablePair.of("value", fieldType),
@@ -692,7 +730,13 @@ public class ViewModelGenerator {
             
             if (finalFlag) {
                 fieldBuild.addModifiers(Modifier.FINAL);
-                dest.addInitializationParameter(fieldName, fieldType);
+                
+                String paramName = CaseFormat.UPPER_CAMEL.to(
+                        CaseFormat.LOWER_CAMEL, fieldName);
+                dest.addInitializationParameter(paramName, fieldType);
+                dest.addInitializationCode(CodeBlock.builder()
+                        .addStatement("my$L = $L", fieldName, paramName)
+                        .build());
                 
                 if (!leafFlag) {
                     dest.addInitializationCode(
