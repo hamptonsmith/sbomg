@@ -5,6 +5,7 @@
  */
 package viewmodelgenerator;
 
+import com.google.common.base.CaseFormat;
 import com.google.common.base.Function;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
@@ -34,6 +35,7 @@ import java.io.StringReader;
 import java.io.StringWriter;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +51,36 @@ import org.yaml.snakeyaml.Yaml;
  * @author hamptos
  */
 public class ViewModelGenerator {
+    private static final Template LIST_ITERATOR_TEMPL;
+    private static final String LIST_ITERATOR_CODE = ""
+            + "      return new Iterator<${elementType}>() {\n"
+            + "          private final Iterator<${contextName}Key> "
+            + "myBaseIterator = ${baseIterable}.iterator();\n\n"
+            + "          @Override\n"
+            + "          public boolean hasNext() {\n"
+            + "            return myBaseIterator.hasNext();\n"
+            + "          }\n\n"
+            + "          @Override\n"
+            + "          public void remove() {\n"
+            + "            throw new UnsupportedOperationException();\n"
+            + "          }\n\n"
+            + "          @Override\n"
+            + "          public ${elementType} next() {\n"
+            + "            return myBaseIterator.next().getValue();\n"
+            + "          }\n"
+            + "        };\n"
+            ;
+    
+    private static final Template RETURN_LIST_METHOD_TEMPL;
+    private static final String RETURN_LIST_METHOD_CODE = ""
+            + "return new Iterable<${elementType}>() {\n"
+            + "    @Override\n"
+            + "    public $T iterator() {\n"
+            + "      ${iteratorCode}"
+            + "    }\n"
+            + "  };\n"
+            ;
+    
     private static final Template REPLACE_LIST_METHOD_TEMPL;
     private static final String REPLACE_LIST_METHOD_CODE = ""
             + "if (${elementsParam} == null) {\n"
@@ -267,6 +299,8 @@ public class ViewModelGenerator {
         LIST_SET_METHOD_BY_KEY_TEMPL =
                 template(LIST_SET_METHOD_BY_KEY_CODE, c);
         REPLACE_LIST_METHOD_TEMPL = template(REPLACE_LIST_METHOD_CODE, c);
+        RETURN_LIST_METHOD_TEMPL = template(RETURN_LIST_METHOD_CODE, c);
+        LIST_ITERATOR_TEMPL = template(LIST_ITERATOR_CODE, c);
         
         SUBSCRIBE_IF_NOT_NULL_TEMPL = template(SUBSCRIBE_IF_NOT_NULL_CODE, c);
     }
@@ -364,10 +398,10 @@ public class ViewModelGenerator {
                         .build())
                 .build());
         
-        FieldSpec.Builder field = FieldSpec.builder(ParameterizedTypeName.get(
+        FieldSpec.Builder field = FieldSpec.builder(
+                ParameterizedTypeName.get(
                         ClassName.get("java.util", "List"), slotType),
-                "my" + contextName + "List",
-                Modifier.PRIVATE)
+                "my" + contextName + "List", Modifier.PRIVATE)
                 .initializer(
                         "new $T<>()", ClassName.get("java.util", "LinkedList"));
         
@@ -376,6 +410,59 @@ public class ViewModelGenerator {
         }
         
         dest.addField(field.build());
+        
+        dest.addRootMethod("get" + contextName + "Element", elType,
+                ImmutableList.of(ImmutablePair.of("index", TypeName.INT)),
+                CodeBlock.builder()
+                        .addStatement("return my$LList.get(index).getValue()",
+                                contextName)
+                        .build());
+        
+        dest.addRootMethod("get" + contextName + "Element", elType,
+                ImmutableList.of(ImmutablePair.of("key", slotType)),
+                CodeBlock.builder()
+                        .addStatement("int index = my$LList.indexOf(key)",
+                                contextName)
+                        .addStatement("return my$LList.get(index).getValue()",
+                                contextName)
+                        .build());
+        
+        if (contextName.isEmpty()) {
+            dest.addImplements(ParameterizedTypeName.get(
+                    ClassName.get(Iterable.class), elType));
+            dest.addOverriddenRootMethod("iterator", 
+                    ParameterizedTypeName.get(
+                            ClassName.get(Iterator.class), elType),
+                    ImmutableList.of(),
+                    renderCodeBlock(LIST_ITERATOR_TEMPL,
+                                    "elementType", elTypeRaw,
+                                    "contextName", contextName,
+                                    "baseIterable",
+                                            "my" + contextName + "List"));
+        }
+        else {
+            // Gross workaround here.  JavaPoet doesn't provide anyway to
+            // include a random non-static import.  So we render out a template
+            // that happens to include an unresolved $T, then replace it with
+            // the type we want to import.
+            dest.addRootMethod(
+                    CaseFormat.UPPER_CAMEL.to(
+                            CaseFormat.LOWER_CAMEL, contextName),
+                    ParameterizedTypeName.get(
+                            ClassName.get(Iterable.class), elType),
+                    ImmutableList.of(),
+                    CodeBlock.of(
+                            renderTemplate(RETURN_LIST_METHOD_TEMPL,
+                                    "elementType", elTypeRaw,
+                                    "iteratorCode", renderTemplate(
+                                            LIST_ITERATOR_TEMPL,
+                                            "elementType", elTypeRaw,
+                                            "contextName", contextName,
+                                            "baseIterable", "my" + contextName 
+                                                    + "List")),
+                            ParameterizedTypeName.get(
+                                    ClassName.get(Iterator.class), elType)));
+        }
         
         if (replaceableFlag) {
             dest.addListenerEvent(contextName + "Replaced", ImmutableList.of(

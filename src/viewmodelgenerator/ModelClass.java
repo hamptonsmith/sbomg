@@ -48,6 +48,8 @@ public class ModelClass {
     
     private final CodeBlock.Builder myBuildCode = CodeBlock.builder();
     
+    private final List<TypeName> myImplementsList = new LinkedList<>();
+    
     public ModelClass(String name, boolean staticFlag) {
         myName = name;
         myStaticFlag = staticFlag;
@@ -239,9 +241,32 @@ public class ModelClass {
             result.addType(type);
         }
         
+        for (TypeName type : myImplementsList) {
+            result.addSuperinterface(type);
+        }
+        
         return result.build();
     }
 
+    public void addImplements(TypeName parent) {
+        myImplementsList.add(parent);
+    }
+    
+    public void addOverriddenRootMethod(String methodName, TypeName returnType,
+            Iterable<Pair<String, TypeName>> parameters, CodeBlock code) {
+        MethodSpec.Builder b = MethodSpec.methodBuilder(methodName)
+                .addAnnotation(java.lang.Override.class)
+                .returns(returnType)
+                .addCode(code)
+                .addModifiers(Modifier.PUBLIC);
+        
+        for (Pair<String, TypeName> param : parameters) {
+            b.addParameter(param.getRight(), param.getLeft(), Modifier.FINAL);
+        }
+        
+        myRootMethods.add(b.build());
+    }
+    
     public void addRootMethod(String methodName, TypeName returnType,
             Iterable<Pair<String, TypeName>> parameters, CodeBlock code) {
         MethodSpec.Builder b = MethodSpec.methodBuilder(methodName)
