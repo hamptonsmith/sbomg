@@ -46,6 +46,8 @@ public class ModelClass {
     private final CodeBlock.Builder myAdditionalInitializationCode =
             CodeBlock.builder();
     
+    private final CodeBlock.Builder myBuildCode = CodeBlock.builder();
+    
     public ModelClass(String name, boolean staticFlag) {
         myName = name;
         myStaticFlag = staticFlag;
@@ -83,6 +85,10 @@ public class ModelClass {
     
     public void addType(TypeSpec t) {
         myRootTypes.add(t);
+    }
+    
+    public void addBuildCode(CodeBlock c) {
+        myBuildCode.add(c);
     }
     
     public TypeSpec buildTypeSpec() {
@@ -187,6 +193,13 @@ public class ModelClass {
         constructor.addCode(myAdditionalInitializationCode.build());
         result.addMethod(constructor.build());
         
+        result.addMethod(MethodSpec.methodBuilder("build")
+                .addModifiers(Modifier.PUBLIC)
+                .returns(TypeName.VOID)
+                .addParameter(
+                        ClassName.get("", "Listener"), "l", Modifier.FINAL)
+                .addCode(myBuildCode.build()).build());
+        
         result.addMethod(MethodSpec.methodBuilder("addListener")
                 .addModifiers(Modifier.PUBLIC)
                 .returns(ClassName.get("", "Subscription"))
@@ -252,6 +265,10 @@ public class ModelClass {
         myRootListener.addMethod(eventName, parameters);
     }
     
+    public int getListenerEventCount() {
+        return myRootListener.getMethodCount();
+    }
+    
     public void createAuxiliaryListener(String auxName) {
         myAuxiliaryListeners.put(auxName, new AbstractMethodSet());
     }
@@ -277,6 +294,10 @@ public class ModelClass {
         public ImmutableList<Pair<String, TypeName>> getParameters(
                 String name) {
             return myMethods.get(name);
+        }
+        
+        public int getMethodCount() {
+            return myMethods.size();
         }
     }
     

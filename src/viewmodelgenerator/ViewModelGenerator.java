@@ -49,6 +49,38 @@ import org.yaml.snakeyaml.Yaml;
  * @author hamptos
  */
 public class ViewModelGenerator {
+    private static final Template REPLACE_LIST_METHOD_TEMPL;
+    private static final String REPLACE_LIST_METHOD_CODE = ""
+            + "if (${elementsParam} == null) {\n"
+            + "  throw new NullPointerException();\n"
+            + "}\n\n"
+            + "<#if !leafFlag>"
+            + "for (${elementType} e : my${contextName}List) {\n"
+            + "  if (my${contextName}Subscriptions.containsKey(e)) {\n"
+            + "    my${contextName}Subscriptions.remove(e).unsubscribe();\n"
+            + "  }\n"
+            + "}\n\n"
+            + "</#if>"
+            + "my${contextName}List = new LinkedList<>();\n"
+            + "final List<${elementType}> valueList = new LinkedList<>();\n"
+            + "for (${elementType} e : ${elementsParam}) {\n"
+            + "  valueList.add(e);\n"
+            + "  my${contextName}List.add(new ${contextName}Key(e));\n"
+            + "<#if !leafFlag>"
+            + "  subscribeIfNotNull(e);\n"
+            + "</#if>"
+            + "}\n\n"
+            + "Event replaceEvent = new Event() {\n"
+            + "  @Override public void on(Listener l) {\n"
+            + "    l.on${contextName}Replaced(${parentType}.this, "
+            + "java.util.Collections.unmodifiableList(valueList));\n"
+            + "  }\n"
+            + "};\n"
+            + "for (EventListener l : myListeners) {\n"
+            + "  l.on(replaceEvent);\n"
+            + "}\n"
+            ;
+    
     private static final Template SUBSCRIBE_IF_NOT_NULL_TEMPL;
     private static final String SUBSCRIBE_IF_NOT_NULL_CODE = ""
             + "final ${fieldType} value = ${keyParam}.getValue();\n"
@@ -234,6 +266,7 @@ public class ViewModelGenerator {
                 template(LIST_SET_METHOD_BY_INDEX_CODE, c);
         LIST_SET_METHOD_BY_KEY_TEMPL =
                 template(LIST_SET_METHOD_BY_KEY_CODE, c);
+        REPLACE_LIST_METHOD_TEMPL = template(REPLACE_LIST_METHOD_CODE, c);
         
         SUBSCRIBE_IF_NOT_NULL_TEMPL = template(SUBSCRIBE_IF_NOT_NULL_CODE, c);
     }
@@ -279,7 +312,8 @@ public class ViewModelGenerator {
             
             switch (listDesc.size()) {
                 case 1: {
-                    outfitModelWithList(dest, contextName, listDesc.get(0));
+                    outfitModelWithList(dest,
+                            contextName, new HashSet<>(), listDesc.get(0));
                     break;
                 }
                 case 2: {
@@ -293,22 +327,16 @@ public class ViewModelGenerator {
                 }
             }
         }
-        else if (modelDesc instanceof Map) {
-            Map<String, Object> mapDesc = (Map<String, Object>) modelDesc;
-            for (Map.Entry<String, Object> field : mapDesc.entrySet()) {
-                outfitModel(dest, field.getKey(), field.getValue());
-            }
-        }
-        else if (modelDesc instanceof String) {
-            outfitModel(dest, contextName, new HashSet<>(), modelDesc);
-        }
         else {
-            throw new RuntimeException();
+            outfitModel(dest, contextName, new HashSet<>(), modelDesc);
         }
     }
     
-    private static void outfitModelWithList(
-            ModelClass dest, String contextName, Object elDesc) {
+    private static void outfitModelWithList(ModelClass dest,
+            String contextName, Set<String> listOptions, Object elDesc) {
+        boolean immutableFlag = listOptions.contains("immutable");
+        boolean replaceableFlag = listOptions.contains("replaceable");
+        
         ListElementTypeData elTypeData =
                 outfitModelWithListElementType(dest, contextName, elDesc);
         String elTypeRaw = elTypeData.getRawTypeName();
@@ -336,14 +364,37 @@ public class ViewModelGenerator {
                         .build())
                 .build());
         
-        dest.addField(FieldSpec.builder(
-                ParameterizedTypeName.get(
+        FieldSpec.Builder field = FieldSpec.builder(ParameterizedTypeName.get(
                         ClassName.get("java.util", "List"), slotType),
                 "my" + contextName + "List",
-                Modifier.PRIVATE, Modifier.FINAL)
+                Modifier.PRIVATE)
                 .initializer(
-                        "new $T<>()", ClassName.get("java.util", "LinkedList"))
-                .build());
+                        "new $T<>()", ClassName.get("java.util", "LinkedList"));
+        
+        if (!replaceableFlag) {
+            field.addModifiers(Modifier.FINAL);
+        }
+        
+        dest.addField(field.build());
+        
+        if (replaceableFlag) {
+            dest.addListenerEvent(contextName + "Replaced", ImmutableList.of(
+                    ImmutablePair.of("newValue", ParameterizedTypeName.get(
+                        ClassName.get("java.util", "List"), elType))));
+            
+            dest.addRootMethod("replace" + contextName, TypeName.VOID,
+                    ImmutableList.of(
+                            ImmutablePair.of("elements", 
+                                    ParameterizedTypeName.get(
+                                            ClassName.get("", "Iterable"),
+                                            elType))),
+                    renderCodeBlock(REPLACE_LIST_METHOD_TEMPL,
+                            "contextName", contextName,
+                            "elementType", elTypeRaw,
+                            "parentType", dest.getName(),
+                            "elementsParam", "elements",
+                            "leafFlag", elTypeData.isLeaf()));
+        }
         
         if (!elTypeData.isLeaf()) {
             dest.addField(FieldSpec.builder(
@@ -355,50 +406,7 @@ public class ViewModelGenerator {
                     .initializer(
                             "new $T<>()", ClassName.get("java.util", "HashMap"))
                     .build());
-        }
-        
-        dest.addListenerEvent(contextName + "Added", ImmutableList.of(
-                ImmutablePair.of("addedElement", elType),
-                ImmutablePair.of("index", TypeName.INT),
-                ImmutablePair.of("key", slotType)));
-        dest.addRootMethod("add" + contextName, TypeName.VOID, ImmutableList.of(
-                ImmutablePair.of("newElement", elType)), 
-                renderCodeBlock(LIST_ADD_METHOD_TEMPL,
-                        "valueParam", "newElement",
-                        "fieldName", contextName,
-                        "fieldType", elTypeRaw,
-                        "leafFlag", elTypeData.isLeaf(),
-                        "parentType", dest.getName()));
-        
-        dest.addListenerEvent(contextName + "Removed", ImmutableList.of(
-                ImmutablePair.of("removedElement", elType),
-                ImmutablePair.of("index", TypeName.INT),
-                ImmutablePair.of("key", slotType)));
-        dest.addRootMethod("remove" + contextName, TypeName.VOID,
-                ImmutableList.of(ImmutablePair.of("index", TypeName.INT)),
-                renderCodeBlock(LIST_REMOVE_METHOD_BY_INDEX_TEMPL,
-                        "indexParam", "index",
-                        "fieldName", contextName));
-        dest.addRootMethod("remove" + contextName, TypeName.VOID,
-                ImmutableList.of(ImmutablePair.of("key", slotType)),
-                renderCodeBlock(LIST_REMOVE_METHOD_BY_KEY_TEMPL,
-                        "keyParam", "key",
-                        "fieldName", contextName));
-        dest.addRootMethod(MethodSpec.methodBuilder("remove" + contextName)
-                .addModifiers(Modifier.PRIVATE)
-                .returns(TypeName.VOID)
-                .addParameter(TypeName.INT, "index", Modifier.FINAL)
-                .addParameter(slotType, "key", Modifier.FINAL)
-                .addCode(renderCodeBlock(LIST_REMOVE_METHOD_CORE_TEMPL,
-                        "fieldName", contextName,
-                        "keyParam", "key",
-                        "indexParam", "index",
-                        "leafFlag", elTypeData.isLeaf(),
-                        "parentType", dest.getName()))
-                .build());
-                
-        
-        if (!elTypeData.isLeaf()) {
+            
             dest.addListenerEvent(contextName + "Updated", ImmutableList.of(
                     ImmutablePair.of("updatedElement", elType),
                     ImmutablePair.of("index", TypeName.INT),
@@ -417,48 +425,104 @@ public class ViewModelGenerator {
                 .build());
         }
         
-        if (!elTypeData.isFinal()) {
-            dest.addListenerEvent(contextName + "Set", ImmutableList.of(
-                    ImmutablePair.of("oldValue", elType),
-                    ImmutablePair.of("newValue", elType),
+        if (!immutableFlag) {
+            dest.addBuildCode(CodeBlock.builder()
+                    .beginControlFlow("")
+                    .addStatement("int i = 0")
+                    .beginControlFlow(
+                            "for ($T s : my$LList)", slotType, contextName)
+                    .addStatement("l.on$LAdded(this, s.getValue(), i, s)",
+                            contextName)
+                    .addStatement("i++")
+                    .endControlFlow()
+                    .endControlFlow()
+                    .build());
+
+            dest.addListenerEvent(contextName + "Added", ImmutableList.of(
+                    ImmutablePair.of("addedElement", elType),
                     ImmutablePair.of("index", TypeName.INT),
                     ImmutablePair.of("key", slotType)));
-            dest.addRootMethod("set" + contextName, TypeName.VOID,
+            dest.addRootMethod("add" + contextName, TypeName.VOID,
                     ImmutableList.of(
-                            ImmutablePair.of("index", TypeName.INT),
-                            ImmutablePair.of("newValue", elType)),
-                    renderCodeBlock(LIST_SET_METHOD_BY_INDEX_TEMPL,
-                            "fieldName", contextName,
+                            ImmutablePair.of("newElement", elType)), 
+                            renderCodeBlock(LIST_ADD_METHOD_TEMPL,
+                                    "valueParam", "newElement",
+                                    "fieldName", contextName,
+                                    "fieldType", elTypeRaw,
+                                    "leafFlag", elTypeData.isLeaf(),
+                                    "parentType", dest.getName()));
+
+            dest.addListenerEvent(contextName + "Removed", ImmutableList.of(
+                    ImmutablePair.of("removedElement", elType),
+                    ImmutablePair.of("index", TypeName.INT),
+                    ImmutablePair.of("key", slotType)));
+            dest.addRootMethod("remove" + contextName, TypeName.VOID,
+                    ImmutableList.of(ImmutablePair.of("index", TypeName.INT)),
+                    renderCodeBlock(LIST_REMOVE_METHOD_BY_INDEX_TEMPL,
                             "indexParam", "index",
+                            "fieldName", contextName));
+            dest.addRootMethod("remove" + contextName, TypeName.VOID,
+                    ImmutableList.of(ImmutablePair.of("key", slotType)),
+                    renderCodeBlock(LIST_REMOVE_METHOD_BY_KEY_TEMPL,
+                            "keyParam", "key",
+                            "fieldName", contextName));
+            dest.addRootMethod(MethodSpec.methodBuilder("remove" + contextName)
+                    .addModifiers(Modifier.PRIVATE)
+                    .returns(TypeName.VOID)
+                    .addParameter(TypeName.INT, "index", Modifier.FINAL)
+                    .addParameter(slotType, "key", Modifier.FINAL)
+                    .addCode(renderCodeBlock(LIST_REMOVE_METHOD_CORE_TEMPL,
+                            "fieldName", contextName,
+                            "keyParam", "key",
+                            "indexParam", "index",
+                            "leafFlag", elTypeData.isLeaf(),
+                            "parentType", dest.getName()))
+                    .build());
+
+            if (!elTypeData.isFinal()) {
+                dest.addListenerEvent(contextName + "Set", ImmutableList.of(
+                        ImmutablePair.of("oldValue", elType),
+                        ImmutablePair.of("newValue", elType),
+                        ImmutablePair.of("index", TypeName.INT),
+                        ImmutablePair.of("key", slotType)));
+                dest.addRootMethod("set" + contextName, TypeName.VOID,
+                        ImmutableList.of(
+                                ImmutablePair.of("index", TypeName.INT),
+                                ImmutablePair.of("newValue", elType)),
+                        renderCodeBlock(LIST_SET_METHOD_BY_INDEX_TEMPL,
+                                "fieldName", contextName,
+                                "indexParam", "index",
+                                "valueParam", "newValue"));
+                dest.addRootMethod("set" + contextName, TypeName.VOID,
+                    ImmutableList.of(
+                            ImmutablePair.of("key", slotType),
+                            ImmutablePair.of("newValue", elType)),
+                    renderCodeBlock(LIST_SET_METHOD_BY_KEY_TEMPL,
+                            "keyParam", "key",
+                            "fieldName", contextName,
                             "valueParam", "newValue"));
-            dest.addRootMethod("set" + contextName, TypeName.VOID,
-                ImmutableList.of(
-                        ImmutablePair.of("key", slotType),
-                        ImmutablePair.of("newValue", elType)),
-                renderCodeBlock(LIST_SET_METHOD_BY_KEY_TEMPL,
-                        "keyParam", "key",
-                        "fieldName", contextName,
-                        "valueParam", "newValue"));
-            dest.addRootMethod(MethodSpec.methodBuilder("set" + contextName)
-                .returns(TypeName.VOID)
-                .addModifiers(Modifier.PRIVATE)
-                .addParameter(TypeName.INT, "index", Modifier.FINAL)
-                .addParameter(slotType, "key", Modifier.FINAL)
-                .addParameter(elType, "value", Modifier.FINAL)
-                .addCode(renderCodeBlock(LIST_SET_METHOD_CORE_TEMPL,
-                        "keyParam", "key",
-                        "indexParam", "index",
-                        "valueParam", "value",
-                        "leafFlag", elTypeData.isLeaf(),
-                        "fieldName", contextName,
-                        "fieldType", elTypeRaw,
-                        "parentType", dest.getName()))
-                .build());
+                dest.addRootMethod(MethodSpec.methodBuilder("set" + contextName)
+                    .returns(TypeName.VOID)
+                    .addModifiers(Modifier.PRIVATE)
+                    .addParameter(TypeName.INT, "index", Modifier.FINAL)
+                    .addParameter(slotType, "key", Modifier.FINAL)
+                    .addParameter(elType, "value", Modifier.FINAL)
+                    .addCode(renderCodeBlock(LIST_SET_METHOD_CORE_TEMPL,
+                            "keyParam", "key",
+                            "indexParam", "index",
+                            "valueParam", "value",
+                            "leafFlag", elTypeData.isLeaf(),
+                            "fieldName", contextName,
+                            "fieldType", elTypeRaw,
+                            "parentType", dest.getName()))
+                    .build());
+            }
         }
     }
     
     private static ListElementTypeData outfitModelWithListElementType(
             ModelClass dest, String contextName, Object elDesc) {
+        System.out.println("outfitModelWithListElementType-noopt: " + elDesc);
         ListElementTypeData result;
         
         if (elDesc instanceof List) {
@@ -468,10 +532,8 @@ public class ViewModelGenerator {
                     Set<String> options = ImmutableSet.copyOf(
                             (List<String>) listElDesc.get(0));
                             
-                    result = new ListElementTypeData(options.contains("final"),
-                            options.contains("leaf"),
-                            outfitModelWithListElementType(dest, contextName,
-                                    options, listElDesc.get(1)));
+                    result = outfitModelWithListElementType(
+                            dest, contextName, options, listElDesc.get(1));
                     break;
                 }
                 default: {
@@ -480,26 +542,35 @@ public class ViewModelGenerator {
             }
         }
         else {
-            result = new ListElementTypeData(false, false,
-                    outfitModelWithListElementType(
-                            dest, contextName, new HashSet<>(), elDesc));
+            result = outfitModelWithListElementType(
+                            dest, contextName, new HashSet<>(), elDesc);
         }
         
         return result;
     }
     
-    private static String outfitModelWithListElementType(ModelClass dest,
-            String contextName, Set<String> options, Object elDesc) {
-        String result;
+    private static ListElementTypeData outfitModelWithListElementType(
+            ModelClass dest, String contextName, Set<String> options,
+            Object elDesc) {
+        System.out.println("outfitModelWithListElementType: " + elDesc);
+        ListElementTypeData result;
         
         if (elDesc instanceof String) {
-            result = (String) elDesc;
+            result = new ListElementTypeData(options.contains("final"),
+                    options.contains("leaf"), (String) elDesc);
         }
         else if (elDesc instanceof Map) {
-            result = contextName + "Record";
-            ModelClass r = new ModelClass(result, true);
+            String rawElementName = contextName + "Record";
+            ModelClass r = new ModelClass(rawElementName, true);
             outfitModel(r, "", elDesc);
+            
+            boolean leaf =
+                    options.contains("leaf") || r.getListenerEventCount() == 0;
+            
             dest.addType(r.buildTypeSpec());
+            
+            result = new ListElementTypeData(
+                    options.contains("final"), leaf, rawElementName);
         }
         else {
             throw new RuntimeException();
@@ -518,7 +589,6 @@ public class ViewModelGenerator {
             fieldName = "Value";
         }
         
-        FieldSpec field;
         if (modelDesc instanceof String) {
             String fieldTypeString = (String) modelDesc;
             TypeName fieldType = typeName(fieldTypeString);
@@ -527,7 +597,7 @@ public class ViewModelGenerator {
                     fieldType, "my" + fieldName, Modifier.PRIVATE);
             
             if (!leafFlag) {
-                dest.addListenerEvent(contextName + "Update", ImmutableList.of(
+                dest.addListenerEvent(contextName + "Updated", ImmutableList.of(
                         ImmutablePair.of("value", fieldType),
                         ImmutablePair.of("event", ClassName.get(
                                 "", fieldTypeString + ".Event"))));
@@ -557,6 +627,11 @@ public class ViewModelGenerator {
                     dest.addField(subscriptionField.build());
                 }
                 
+                dest.addBuildCode(CodeBlock.builder()
+                        .addStatement(
+                                "l.on$LSet(this, my$L)", contextName, fieldName)
+                        .build());
+                
                 dest.addListenerEvent(contextName + "Set", ImmutableList.of(
                         ImmutablePair.of("newValue", fieldType)));
                 
@@ -577,13 +652,35 @@ public class ViewModelGenerator {
                                     )));
             }
             
-            field = fieldBuild.build();
+            dest.addField(fieldBuild.build());
+        }
+        else if (modelDesc instanceof List) {
+            List listDesc = (List) modelDesc;
+            
+            switch (listDesc.size()) {
+                case 1: {
+                    outfitModelWithList(dest, contextName, options,
+                            listDesc.get(0));
+                    break;
+                }
+                case 2: {
+                    outfitModelWithList(dest, contextName, options, listDesc);
+                    break;
+                }
+                default: {
+                    throw new RuntimeException();
+                }
+            }
+        }
+        else if (modelDesc instanceof Map) {
+            Map<String, Object> mapDesc = (Map<String, Object>) modelDesc;
+            for (Map.Entry<String, Object> field : mapDesc.entrySet()) {
+                outfitModel(dest, field.getKey(), field.getValue());
+            }
         }
         else {
             throw new RuntimeException(modelDesc.getClass().getSimpleName());
         }
-        
-        dest.addField(field);
     }
     
     private static CodeBlock renderCodeBlock(Template t, Object ... data) {
