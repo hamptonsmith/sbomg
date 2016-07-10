@@ -237,7 +237,8 @@ public class ModelClass {
             result.addField(f);
         }
         
-        MethodSpec.Builder constructor = MethodSpec.constructorBuilder();
+        MethodSpec.Builder constructor = MethodSpec.constructorBuilder()
+                .addModifiers(Modifier.PUBLIC);
         for (Pair<String, TypeName> param : myInitializationParams) {
             String paramName = param.getLeft();
             constructor.addParameter(param.getRight(), paramName);

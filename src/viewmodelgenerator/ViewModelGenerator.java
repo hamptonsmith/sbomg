@@ -307,9 +307,6 @@ public class ViewModelGenerator {
         return result;
     }
     
-    /**
-     * @param args the command line arguments
-     */
     public static void main(String[] args)
             throws FileNotFoundException, IOException {
         File f = new File(args[0]);
@@ -328,6 +325,18 @@ public class ViewModelGenerator {
         
         System.out.println(formatModelDesc(e.getRawModelDescription()));
         output.writeTo(System.out);
+    }
+    
+    public static void generate(String packageName, String rootModelName,
+            Object descriptor, Appendable out)
+            throws IOException {
+        ModelClass r = new ModelClass(rootModelName, false);
+        outfitModel(r, "", descriptor);
+        
+        JavaFile output =
+                JavaFile.builder(packageName, r.buildTypeSpec()).build();
+        
+        output.writeTo(out);
     }
     
     private static void outfitModel(
