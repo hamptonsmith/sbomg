@@ -12,7 +12,6 @@ import java.io.FileFilter;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileWriter;
-import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Writer;
@@ -35,6 +34,8 @@ import org.yaml.snakeyaml.Yaml;
  */
 public final class Cli {
     public static void main(String[] args) {
+        int result;
+        
         try {
             Options options = new Options();
             options.addOption(
@@ -61,26 +62,37 @@ public final class Cli {
                                     modelName, modelDesc, outputWriter);
                         }
                         catch (IOException ioe) {
-                            File outputFile =
-                                    buildOutputFile(targetPath, modelName);
-                            System.err.println("Error writing to target file "
-                                    + outputFile.getPath() +": ");
-                            System.err.println(ioe.getMessage());
-                            
+                            throw new FileException(
+                                    buildOutputFile(targetPath, modelName),
+                                    "writing to target", ioe.getMessage());
                         }
                     }
+                    catch (IOException ioe) {
+                        throw new FileException(
+                                    buildOutputFile(targetPath, modelName),
+                                    "opening target", ioe.getMessage());
+                    }
                 }
-            }
-            catch (IOException ioe) {
                 
+                result = 0;
             }
             catch (OperationException oe) {
-                    
+                System.err.println(oe.getMessage());
+                result = 1;
             }
+        }
+        catch (FileException fe) {
+            System.err.println("Error " + fe.getTask() + " file "
+                    + fe.getFile().getPath() + ":");
+            System.err.println("    " + fe.getMessage());
+            
+            result = 1;
         }
         catch (ParseException pe) {
             throw new RuntimeException(pe);
         }
+        
+        System.exit(result);
     }
     
     private static Plan makePlan(CommandLine cmd) throws OperationException {
@@ -169,19 +181,9 @@ public final class Cli {
     
     private static void accumulateModels(File root, ProjectDescriptor project,
             Plan dest) throws OperationException {
-        FileFilter models = new FileFilter() {
-                    @Override
-                    public boolean accept(File file) {
-                        return !file.isDirectory()
-                                && file.getName().endsWith(".sbomg");
-                    }
-                };
-        FileFilter directories = new FileFilter() {
-                    @Override
-                    public boolean accept(File file) {
-                        return file.isDirectory();
-                    }
-                };
+        FileFilter models = (File file) ->
+                !file.isDirectory() && file.getName().endsWith(".sbomg");
+        FileFilter directories = (File file) -> file.isDirectory();
         
         for (File modelFile : root.listFiles(models)) {
             String packageSpec = project.getPackage(root);
@@ -212,12 +214,7 @@ public final class Cli {
             result = findProjectDescriptor(start.getParentFile());
         }
         else {
-            FileFilter ff = new FileFilter() {
-                @Override
-                public boolean accept(File file) {
-                    return file.getName().equals("sbomg.yaml");
-                }
-            };
+            FileFilter ff = (File file) -> file.getName().equals("sbomg.yaml");
             File[] files = start.listFiles(ff);
             switch (files.length) {
                 case 0: {
@@ -328,45 +325,6 @@ public final class Cli {
         File targetDir = new File((String) rawTargetDir);
         return new ProjectDescriptor(
                 location.getParentFile(), srcDirs, targetDir);
-    }
-    
-    private static Parameters deriveParameters(
-            File inputFile, CommandLine cmd) throws OperationException {
-        Parameters result;
-        
-        String[] args = cmd.getArgs();
-        
-        String inputFileName = inputFile.getName();
-        if (inputFileName.endsWith(".sbomg")) {
-            if (args.length > 1) {
-                File outputPath;
-                if (args.length > 2) {
-                    outputPath = new File(args[2]);
-                }
-                else {
-                    outputPath = new File(System.getProperty("user.dir"));
-                }
-                
-                result = new Parameters(args[1], outputPath);
-            }
-            else {
-                result = parametersFromProjectFile(inputFile, cmd);
-            }
-        }
-        else if (inputFileName.endsWith(".sbomgp.yaml")) {
-            if (args.length > 1) {
-                throw new OperationException("Too many arguments for "
-                        + "project descriptor input.  Do not specify package "
-                        + "or output path.");
-            }
-        }
-        
-        return result;
-    }
-    
-    private static Parameters parametersProjectFile(File inputFile,
-            CommandLine cmd) throws OperationException {
-        
     }
     
     private static String nameWithoutExtension(File f) {
@@ -610,7 +568,7 @@ public final class Cli {
     }
     
     private static class Plan {
-        private Map<File, ModelOutputParameters> myModelsToProcess =
+        private final Map<File, ModelOutputParameters> myModelsToProcess =
                 new HashMap<>();
         
         public void addModel(
@@ -711,6 +669,26 @@ public final class Cli {
         
         public String getPackage() {
             return myPackage;
+        }
+    }
+    
+    private static class FileException extends Exception {
+        private final File myFile;
+        private final String myFileTask;
+        
+        public FileException(File f, String task, String errorMsg) {
+            super(errorMsg);
+            
+            myFile = f;
+            myFileTask = task;
+        }
+        
+        public File getFile() {
+            return myFile;
+        }
+        
+        public String getTask() {
+            return myFileTask;
         }
     }
 }
