@@ -40,6 +40,7 @@ public final class Cli {
             Options options = new Options();
             options.addOption(
                     "f", false, "Force overwrite of files that already exist.");
+            options.addOption("q", false, "Quiet all non-error output.");
             
             CommandLineParser parser = new DefaultParser();
             CommandLine cmd = parser.parse(options, args);
@@ -48,6 +49,11 @@ public final class Cli {
                 Plan p = makePlan(cmd);
 
                 for (File input : p.files()) {
+                    if (!cmd.hasOption('q')) {
+                        System.out.println(
+                                "Processing " + input.getPath() + "...");
+                    }
+                    
                     String modelName = nameWithoutExtension(input);
                     File targetPath = p.getDestinationPath(input);
                     try (
