@@ -3,7 +3,7 @@
  * To change this template file, choose Tools | Templates
  * and open the template in the editor.
  */
-package viewmodelgenerator;
+package com.shieldsbetter.sbomg;
 
 import com.google.common.base.VerifyException;
 import com.google.common.collect.ImmutableList;
@@ -83,11 +83,13 @@ public final class Cli {
                 result = 0;
             }
             catch (OperationException oe) {
+                System.err.println();
                 System.err.println(oe.getMessage());
                 result = 1;
             }
         }
         catch (FileException fe) {
+            System.err.println();
             System.err.println("Error " + fe.getTask() + " file "
                     + fe.getFile().getPath() + ":");
             System.err.println("    " + fe.getMessage());
@@ -104,11 +106,10 @@ public final class Cli {
     private static Plan makePlan(CommandLine cmd) throws OperationException {
         Plan result;
         String[] args = cmd.getArgs();
-        File pwd = new File(System.getProperty("user.dir"));
         
         switch (args.length) {
             case 0: {
-                File projectFile = new File(pwd, "sbomg.yaml");
+                File projectFile = new File("sbomg.yaml");
                 if (!projectFile.exists()) {
                     throw new OperationException("Zero-argument form must be "
                             + "run in a directory with an sbomg.yaml project "
@@ -125,6 +126,8 @@ public final class Cli {
                             parseProjectDescriptor(inputFile));
                 }
                 else if (inputFile.getName().endsWith((".sbomg"))) {
+                    inputFile = inputFile.getAbsoluteFile();
+                    
                     result = singleFilePlan(
                             inputFile, findProjectDescriptor(inputFile));
                 }
@@ -166,13 +169,31 @@ public final class Cli {
         return p;
     }
     
-    private static Plan singleFilePlan(File inputFile, ProjectDescriptor d)
+    private static Plan singleFilePlan(
+            File absoluteInputFile, ProjectDescriptor d)
             throws OperationException {
+        File absoluteProjectRoot = d.getRoot().getAbsoluteFile();
+        String absoluteProjectRootPath = absoluteProjectRoot.getPath();
+        if (!absoluteProjectRootPath.endsWith(File.separator)) {
+            absoluteProjectRootPath += File.separator;
+        }
+        
+        String inputFilePath = absoluteInputFile.getPath();
+        
+        if (!inputFilePath.startsWith(absoluteProjectRootPath)) {
+            throw new VerifyException("Not a prefix?");
+        }
+        
+        File projectRelativeInputFile = new File(
+                inputFilePath.substring(absoluteProjectRootPath.length()));
+        
         Plan p = new Plan();
-        String packageSpec = d.getPackage(inputFile);
-        p.addModel(inputFile, packageSpec,
-                new File(d.getTargetDirectory(),
-                        packageSpec.replace(".", File.pathSeparator)));
+        String packageSpec = d.getPackage(projectRelativeInputFile);
+        p.addModel(absoluteInputFile, packageSpec,
+                new File(
+                        new File(absoluteProjectRoot,
+                                d.getTargetDirectory().getPath()),
+                        packageSpec.replace(".", File.separator)));
         return p;
     }
     
@@ -192,15 +213,26 @@ public final class Cli {
         FileFilter directories = (File file) -> file.isDirectory();
         
         for (File modelFile : root.listFiles(models)) {
-            String packageSpec = project.getPackage(root);
-            dest.addModel(modelFile, project.getPackage(modelFile),
-                    new File(project.getRoot(),
-                            packageSpec.replace(".", File.pathSeparator)));
+            String packageSpec = project.getPackage(modelFile);
+            dest.addModel(modelFile, packageSpec, 
+                    new File(project.getTargetDirectory(),
+                            packageSpec.replace(".", File.separator)));
         }
         
         for (File directory : root.listFiles(directories)) {
             accumulateModels(directory, project, dest);
         }
+    }
+    
+    private static ProjectDescriptor findProjectDescriptorInParent(
+            File start) throws OperationException {
+        File parent = start.getParentFile();
+        if (parent == null) {
+            throw new OperationException("Reached " + start.getPath() 
+                    + " without finding sbomg.yaml file.");
+        }
+        
+        return findProjectDescriptor(parent);
     }
     
     private static ProjectDescriptor findProjectDescriptor(File start)
@@ -217,24 +249,18 @@ public final class Cli {
         }
         
         if (isFile) {
-            result = findProjectDescriptor(start.getParentFile());
+            result = findProjectDescriptorInParent(start);
         }
         else {
             FileFilter ff = (File file) -> file.getName().equals("sbomg.yaml");
             File[] files = start.listFiles(ff);
             switch (files.length) {
                 case 0: {
-                    File parent = start.getParentFile();
-                    if (parent == null) {
-                        throw new OperationException("Reached " 
-                                + start.getPath() 
-                                + " without finding sbomg.yaml file.");
-                    }
-                    result = findProjectDescriptor(parent);
+                    result = findProjectDescriptorInParent(start);
                     break;
                 }
                 case 1: {
-                    result = parseProjectDescriptor(start);
+                    result = parseProjectDescriptor(files[0]);
                     break;
                 }
                 default: {
@@ -275,7 +301,7 @@ public final class Cli {
         }
         catch (RuntimeException re) {
             throw new OperationException("Couldn't parse project descriptor "
-                    + locationPath + ": " + re.getMessage());
+                    + locationPath + ": \n" + re.getMessage());
         }
         
         if (!(rawDescriptor instanceof Map)) {
@@ -579,6 +605,8 @@ public final class Cli {
         
         public void addModel(
                 File input, String packageSpec, File destinationPath) {
+            System.out.println("Plan.addModel:destinationPath = " + destinationPath.getPath());
+            
             myModelsToProcess.put(input,
                     new ModelOutputParameters(destinationPath, packageSpec));
         }
@@ -640,14 +668,19 @@ public final class Cli {
         public String getPackage(File f) throws OperationException {
             String result = null;
             
-            String fPath = f.getPath();
+            String fPath = f.getParent();
             Iterator<File> srcs = mySourceDirectories.iterator();
             while (result == null && srcs.hasNext()) {
                 File src = srcs.next();
                 String srcPath = src.getPath();
+                
+                if (!srcPath.endsWith("/")) {
+                    srcPath = srcPath + "/";
+                }
+                
                 if (fPath.startsWith(srcPath)) {
                     String relPath = fPath.substring(srcPath.length());
-                    result = relPath.replace(File.pathSeparator, ".");
+                    result = relPath.replace(File.separator, ".");
                 }
             }
             

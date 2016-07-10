@@ -3,7 +3,7 @@
  * To change this template file, choose Tools | Templates
  * and open the template in the editor.
  */
-package viewmodelgenerator;
+package com.shieldsbetter.sbomg;
 
 import com.google.common.base.CaseFormat;
 import com.google.common.collect.ImmutableList;
