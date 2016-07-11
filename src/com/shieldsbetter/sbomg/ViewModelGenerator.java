@@ -19,8 +19,6 @@ import com.squareup.javapoet.TypeSpec;
 import freemarker.template.Configuration;
 import freemarker.template.Template;
 import freemarker.template.TemplateException;
-import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.StringReader;
 import java.io.StringWriter;
@@ -241,7 +239,7 @@ public class ViewModelGenerator {
             + "        public void on(final ${fieldType}.Event e) {\n"
             + "          Event parentE = new Event() {\n"
             + "            @Override public void on(Listener l) {\n"
-            + "              l.on${fieldName}Update(${parentType}.this,\n"
+            + "              l.on${fieldName}Updated(${parentType}.this,\n"
             + "                  my${fieldName}, e);\n"
             + "            }\n"
             + "          };\n"
@@ -264,7 +262,7 @@ public class ViewModelGenerator {
             + "${afterUnsubscribe}"
             + "Event setEvent = new Event() {\n"
             + "  @Override public void on(Listener l) {\n"
-            + "    l.on${contextName}Set(this, my${fieldName});\n"
+            + "    l.on${contextName}Set(${parentType}.this, my${fieldName});\n"
             + "  }\n"
             + "};\n"
             + "for (EventListener l : myListeners) {\n"
@@ -305,26 +303,6 @@ public class ViewModelGenerator {
             throw new RuntimeException(ioe);
         }
         return result;
-    }
-    
-    public static void main(String[] args)
-            throws FileNotFoundException, IOException {
-        File f = new File(args[0]);
-        Scanner s = new Scanner(f);
-        ExtractedData e = parseFile(s);
-        
-        String fileName = f.getName();
-        String rootContextName =
-                fileName.substring(0, fileName.length() - ".java".length());
-        
-        ModelClass r = new ModelClass(rootContextName, false);
-        outfitModel(r, "", e.getModelDescription());
-        
-        JavaFile output =
-                JavaFile.builder(e.getPackage(), r.buildTypeSpec()).build();
-        
-        System.out.println(formatModelDesc(e.getRawModelDescription()));
-        output.writeTo(System.out);
     }
     
     public static void generate(String packageName, String rootModelName,
@@ -758,13 +736,26 @@ public class ViewModelGenerator {
                 }
             }
             else {
-                if (!leafFlag) {
+                String subscribeCode;
+                if (leafFlag) {
+                    subscribeCode = "";
+                }
+                else {
                     FieldSpec.Builder subscriptionField = FieldSpec.builder(
                             ClassName.get(
                                     "", fieldTypeString + ".Subscription"),
                             "my" + fieldName + "Subscription",
                             Modifier.PRIVATE);
                     dest.addField(subscriptionField.build());
+                    
+                    subscribeCode =
+                            renderTemplate(
+                                    SUBSCRIBE_TEMPL,
+                                    "finalFlag", finalFlag,
+                                    "fieldName", fieldName,
+                                    "fieldType", fieldTypeString,
+                                    "parentType", dest.getName()
+                            );
                 }
                 
                 dest.addBuildCode(CodeBlock.builder()
@@ -779,17 +770,12 @@ public class ViewModelGenerator {
                     ImmutableList.of(
                             ImmutablePair.of("newValue", fieldType)),
                             renderCodeBlock(SET_METHOD_TEMPL,
+                                    "parentType", dest.getName(),
                                     "fieldName", fieldName,
                                     "valueParam", "newValue",
                                     "leafFlag", leafFlag,
                                     "contextName", contextName,
-                                    "afterUnsubscribe", renderTemplate(
-                                            SUBSCRIBE_TEMPL,
-                                            "finalFlag", finalFlag,
-                                            "fieldName", fieldName,
-                                            "fieldType", fieldTypeString,
-                                            "parentType", dest.getName()
-                                    )));
+                                    "afterUnsubscribe", subscribeCode));
             }
             
             dest.addField(fieldBuild.build());
@@ -815,7 +801,8 @@ public class ViewModelGenerator {
         else if (modelDesc instanceof Map) {
             Map<String, Object> mapDesc = (Map<String, Object>) modelDesc;
             for (Map.Entry<String, Object> field : mapDesc.entrySet()) {
-                outfitModel(dest, field.getKey(), field.getValue());
+                outfitModel(
+                        dest, contextName + field.getKey(), field.getValue());
             }
         }
         else {
@@ -845,78 +832,39 @@ public class ViewModelGenerator {
         return w.toString();
     }
     
-    private static String formatModelDesc(String desc) {
-        StringBuilder b = new StringBuilder("/*%\n");
-        Scanner scan = new Scanner(desc);
-        
-        boolean nonEmptyLine = false;
-        while (scan.hasNextLine()) {
-            String nextLine = scan.nextLine();
-            
-            if (nonEmptyLine || !nextLine.isEmpty()) {
-                nonEmptyLine = nonEmptyLine || !nextLine.isEmpty();
-                b.append("  %");
-                b.append(nextLine);
-                b.append("\n");
-            }
-        }
-        b.append("  */\n");
-        return b.toString();
-    }
-    
-    private static ExtractedData parseFile(Scanner s) {
-        String result = "";
-        String pkg = null;
-        
-        boolean started = false;
-        boolean done = false;
-        while (s.hasNextLine()) {
-            String line = s.nextLine().trim();
-            
-            if (line.startsWith("package")) {
-                if (pkg == null) {
-                    pkg = line.substring("package".length())
-                            .trim().split(";")[0];
-                }
-                else {
-                    throw new RuntimeException("Multiple 'package' lines.");
-                }
-            }
-            if (done && line.startsWith("/*%")) {
-                throw new RuntimeException("Multiple view defs.");
-            }
-            else if (!started && line.startsWith("/*%")) {
-                started = true;
-                result += line.substring(3);
-            }
-            else if (started && line.contains("*/")) {
-                started = false;
-                done = true;
-                result += "\n" + line.substring(0, line.indexOf("*/"));
-            }
-            else if (started) {
-                if (!line.startsWith("%")) {
-                    throw new RuntimeException(
-                            "View def lines must start with '%'. Got: " + line);
-                }
-                
-                line = line.substring(1);
-                result += "\n" + line;
-            }
-        }
-        
-        if (pkg == null) {
-            throw new RuntimeException("No 'package' line.");
-        }
-        
-        return new ExtractedData(result, new Yaml().load(result), pkg);
-    }
-    
     private static TypeName typeName(String rawName) {
         TypeName result;
         switch (rawName) {
+            case "boolean": {
+                result = TypeName.BOOLEAN;
+                break;
+            }
+            case "byte": {
+                result = TypeName.BYTE;
+                break;
+            }
+            case "char": {
+                result = TypeName.CHAR;
+                break;
+            }
+            case "double": {
+                result = TypeName.DOUBLE;
+                break;
+            }
+            case "float": {
+                result = TypeName.FLOAT;
+                break;
+            }
             case "int": {
                 result = TypeName.INT;
+                break;
+            }
+            case "long": {
+                result = TypeName.LONG;
+                break;
+            }
+            case "short": {
+                result = TypeName.SHORT;
                 break;
             }
             default: {
@@ -925,31 +873,6 @@ public class ViewModelGenerator {
             }
         }
         return result;
-    }
-    
-    private static class ExtractedData {
-        private final String myRawModelDescription;
-        private final Object myModelDescription;
-        private final String myPackage;
-        
-        public ExtractedData(
-                String rawModelDesc, Object modelDesc, String pkg) {
-            myRawModelDescription = rawModelDesc;
-            myModelDescription = modelDesc;
-            myPackage = pkg;
-        }
-        
-        public String getRawModelDescription() {
-            return myRawModelDescription;
-        }
-        
-        public Object getModelDescription() {
-            return myModelDescription;
-        }
-        
-        public String getPackage() {
-            return myPackage;
-        }
     }
     
     private static class ListElementTypeData {

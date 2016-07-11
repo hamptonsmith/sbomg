@@ -605,8 +605,6 @@ public final class Cli {
         
         public void addModel(
                 File input, String packageSpec, File destinationPath) {
-            System.out.println("Plan.addModel:destinationPath = " + destinationPath.getPath());
-            
             myModelsToProcess.put(input,
                     new ModelOutputParameters(destinationPath, packageSpec));
         }
