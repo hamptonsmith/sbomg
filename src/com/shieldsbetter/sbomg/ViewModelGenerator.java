@@ -29,11 +29,9 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Scanner;
 import java.util.Set;
 import javax.lang.model.element.Modifier;
 import org.apache.commons.lang3.tuple.ImmutablePair;
-import org.yaml.snakeyaml.Yaml;
 
 /**
  *
@@ -76,9 +74,9 @@ public class ViewModelGenerator {
             + "  throw new NullPointerException();\n"
             + "}\n\n"
             + "<#if !leafFlag>"
-            + "for (${elementType} e : my${contextName}List) {\n"
-            + "  if (my${contextName}Subscriptions.containsKey(e)) {\n"
-            + "    my${contextName}Subscriptions.remove(e).unsubscribe();\n"
+            + "for (${contextName}Key k : my${contextName}List) {\n"
+            + "  if (my${contextName}Subscriptions.containsKey(k)) {\n"
+            + "    my${contextName}Subscriptions.remove(k).unsubscribe();\n"
             + "  }\n"
             + "}\n\n"
             + "</#if>"
@@ -86,9 +84,10 @@ public class ViewModelGenerator {
             + "final List<${elementType}> valueList = new LinkedList<>();\n"
             + "for (${elementType} e : ${elementsParam}) {\n"
             + "  valueList.add(e);\n"
-            + "  my${contextName}List.add(new ${contextName}Key(e));\n"
+            + "  ${contextName}Key k = new ${contextName}Key(e);"
+            + "  my${contextName}List.add(k);\n"
             + "<#if !leafFlag>"
-            + "  subscribeIfNotNull(e);\n"
+            + "  subscribeIfNotNull(k);\n"
             + "</#if>"
             + "}\n\n"
             + "Event replaceEvent = new Event() {\n"
@@ -185,6 +184,7 @@ public class ViewModelGenerator {
             + "for (EventListener l : myListeners) {\n"
             + "  l.on(addEvent);\n"
             + "}\n"
+            + "return slot;"
             ;
     
     private static final Template LIST_REMOVE_METHOD_BY_INDEX_TEMPL;
@@ -460,11 +460,12 @@ public class ViewModelGenerator {
             
             CodeBlock.Builder init = CodeBlock.builder()
                     .beginControlFlow("for ($T e : $L)", elType, elementParam)
-                    .addStatement("my$LList.add(new $LKey(e))", contextName,
-                            contextName);
+                    .addStatement(
+                            "$LKey k = new $LKey(e);", contextName, contextName)
+                    .addStatement("my$LList.add(k)", contextName);
             
             if (!elTypeData.isLeaf()) {
-                init.addStatement("subscribeIfNotNull(e)");
+                init.addStatement("subscribeIfNotNull(k)");
             }
             
             init.endControlFlow();
@@ -552,7 +553,7 @@ public class ViewModelGenerator {
                     ImmutablePair.of("addedElement", elType),
                     ImmutablePair.of("index", TypeName.INT),
                     ImmutablePair.of("key", slotType)));
-            dest.addRootMethod("add" + contextName, TypeName.VOID,
+            dest.addRootMethod("add" + contextName, slotType,
                     ImmutableList.of(
                             ImmutablePair.of("newElement", elType)), 
                             renderCodeBlock(LIST_ADD_METHOD_TEMPL,

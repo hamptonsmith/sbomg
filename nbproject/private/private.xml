@@ -3,9 +3,7 @@
     <editor-bookmarks xmlns="http://www.netbeans.org/ns/editor-bookmarks/2" lastBookmarkId="0"/>
     <open-files xmlns="http://www.netbeans.org/ns/projectui-open-files/2">
         <group>
-            <file>file:/home/hamptos/NetBeansProjects/ViewModelGenerator/src/viewmodelgenerator/ViewModelGenerator.java</file>
-            <file>file:/home/hamptos/NetBeansProjects/ViewModelGenerator/src/viewmodelgenerator/Cli.java</file>
-            <file>file:/home/hamptos/NetBeansProjects/ViewModelGenerator/src/viewmodelgenerator/ModelClass.java</file>
+            <file>file:/home/hamptos/NetBeansProjects/ViewModelGenerator/src/com/shieldsbetter/sbomg/ViewModelGenerator.java</file>
         </group>
     </open-files>
 </project-private>
