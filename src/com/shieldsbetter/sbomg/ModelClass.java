@@ -5,7 +5,6 @@
  */
 package com.shieldsbetter.sbomg;
 
-import com.google.common.base.CaseFormat;
 import com.google.common.collect.ImmutableList;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.CodeBlock;
@@ -283,7 +282,8 @@ public class ModelClass {
     }
     
     public void addRootMethod(String methodName, TypeName returnType,
-            Iterable<Pair<String, TypeName>> parameters, CodeBlock code) {
+            Iterable<? extends Pair<String, TypeName>> parameters,
+            CodeBlock code) {
         MethodSpec.Builder b = MethodSpec.methodBuilder(methodName)
                 .returns(returnType)
                 .addCode(code)

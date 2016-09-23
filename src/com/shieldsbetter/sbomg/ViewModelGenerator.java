@@ -134,6 +134,11 @@ public class ViewModelGenerator {
             + "set${fieldName}(${indexParam}, slot, ${valueParam});\n"
             ;
     
+    private static final Template LIST_CONTAINS_VALUE_METHOD_TEMPL;
+    private static final String LIST_CONTAINS_VALUE_METHOD_CODE = ""
+            + "return my${fieldName}List.contains(${valueParam});\n"
+            ;
+    
     private static final Template LIST_SET_METHOD_BY_KEY_TEMPL;
     private static final String LIST_SET_METHOD_BY_KEY_CODE = ""
             + "int index = my${fieldName}List.indexOf(${keyParam});\n"
@@ -162,6 +167,13 @@ public class ViewModelGenerator {
             + "};\n"
             + "for (EventListener l : myListeners) {\n"
             + "  l.on(addEvent);\n"
+            + "}\n"
+            ;
+    
+    private static final Template LIST_CLEAR_METHOD_TEMPL;
+    private static final String LIST_CLEAR_METHOD_CODE = ""
+            + "while (!my${fieldName}List.isEmpty()) {\n"
+            + "  remove${fieldName}(my${fieldName}List.get(0));\n"
             + "}\n"
             ;
     
@@ -275,6 +287,8 @@ public class ViewModelGenerator {
         Configuration c = new Configuration(Configuration.VERSION_2_3_24);
         SUBSCRIBE_TEMPL = template(SUBSCRIBE_CODE, c);
         SET_METHOD_TEMPL = template(SET_METHOD_CODE, c);
+        LIST_CONTAINS_VALUE_METHOD_TEMPL =
+                template(LIST_CONTAINS_VALUE_METHOD_CODE, c);
         LIST_ADD_METHOD_TEMPL = template(LIST_ADD_METHOD_CODE, c);
         LIST_REMOVE_METHOD_CORE_TEMPL =
                 template(LIST_REMOVE_METHOD_CORE_CODE, c);
@@ -287,6 +301,7 @@ public class ViewModelGenerator {
                 template(LIST_SET_METHOD_BY_INDEX_CODE, c);
         LIST_SET_METHOD_BY_KEY_TEMPL =
                 template(LIST_SET_METHOD_BY_KEY_CODE, c);
+        LIST_CLEAR_METHOD_TEMPL = template(LIST_CLEAR_METHOD_CODE, c);
         REPLACE_LIST_METHOD_TEMPL = template(REPLACE_LIST_METHOD_CODE, c);
         RETURN_LIST_METHOD_TEMPL = template(RETURN_LIST_METHOD_CODE, c);
         LIST_ITERATOR_TEMPL = template(LIST_ITERATOR_CODE, c);
@@ -414,18 +429,35 @@ public class ViewModelGenerator {
                                 contextName)
                         .build());
         
+        // TODO: Fix this.  The generated field contians keys not elements.
+        /*
+        dest.addRootMethod("contains" + contextName + "Element",
+                TypeName.BOOLEAN, ImmutableList.of(
+                    ImmutablePair.of("element", elType)),
+                renderCodeBlock(LIST_CONTAINS_VALUE_METHOD_TEMPL,
+                        "fieldName", contextName,
+                        "valueParam", "element"));
+        */
+                
         if (contextName.isEmpty()) {
+            String parentInterfaceName = elTypeRaw;
+            if (elTypeData.isInnerClass()) {
+                parentInterfaceName =
+                        dest.getName() + "." + parentInterfaceName;
+            }
+            
             dest.addImplements(ParameterizedTypeName.get(
-                    ClassName.get("", "Iterable"), elType));
+                    ClassName.get("", "Iterable"),
+                    ClassName.get("", parentInterfaceName)));
             dest.addOverriddenRootMethod("iterator", 
                     ParameterizedTypeName.get(
                             ClassName.get(Iterator.class), elType),
                     ImmutableList.of(),
                     renderCodeBlock(LIST_ITERATOR_TEMPL,
-                                    "elementType", elTypeRaw,
-                                    "contextName", contextName,
-                                    "baseIterable",
-                                            "my" + contextName + "List"));
+                            "elementType", elTypeRaw,
+                            "contextName", contextName,
+                            "baseIterable",
+                                    "my" + contextName + "List"));
         }
         else {
             // Gross workaround here.  JavaPoet doesn't provide any way to
@@ -590,6 +622,11 @@ public class ViewModelGenerator {
                             "parentType", dest.getName()))
                     .build());
 
+            dest.addRootMethod("clear" + contextName, TypeName.VOID,
+                    ImmutableList.<ImmutablePair<String, TypeName>>of(),
+                    renderCodeBlock(LIST_CLEAR_METHOD_TEMPL, "fieldName",
+                            contextName));
+            
             if (!elTypeData.isFinal()) {
                 dest.addListenerEvent(contextName + "Set", ImmutableList.of(
                         ImmutablePair.of("oldValue", elType),
@@ -666,7 +703,7 @@ public class ViewModelGenerator {
         
         if (elDesc instanceof String) {
             result = new ListElementTypeData(options.contains("final"),
-                    options.contains("leaf"), (String) elDesc);
+                    options.contains("leaf"), (String) elDesc, false);
         }
         else if (elDesc instanceof Map) {
             String rawElementName = contextName + "Record";
@@ -679,7 +716,7 @@ public class ViewModelGenerator {
             dest.addType(r.buildTypeSpec());
             
             result = new ListElementTypeData(
-                    options.contains("final"), leaf, rawElementName);
+                    options.contains("final"), leaf, rawElementName, true);
         }
         else {
             throw new RuntimeException();
@@ -879,13 +916,19 @@ public class ViewModelGenerator {
     private static class ListElementTypeData {
         private final boolean myFinalFlag;
         private final boolean myLeafFlag;
+        private final boolean myInnerClassFlag;
         private final String myRawTypeName;
         
         public ListElementTypeData(boolean finalFlag, boolean leafFlag,
-                String rawTypeName) {
+                String rawTypeName, boolean innerClassFlag) {
             myFinalFlag = finalFlag;
             myLeafFlag = leafFlag;
             myRawTypeName = rawTypeName;
+            myInnerClassFlag = innerClassFlag;
+        }
+        
+        public boolean isInnerClass() {
+            return myInnerClassFlag;
         }
         
         public boolean isFinal() {
